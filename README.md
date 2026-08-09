@@ -108,8 +108,25 @@ Al generar un diagnóstico se marcan los dolores usados; cuando el lead pasa a
 `Cerrado - Ganado`, esos dolores suben su `veces_convirtio`.
 
 El generador (`diagnostico.py`) parametriza negocio, dirección, puertas de entrada,
-titular, premisa y hallazgos, y escribe `diagnosticos/{slug}/index.html`. El CSS es
+titular, premisa y hallazgos, y escribe `diagnosticos/dx-{token}/index.html`. El CSS es
 **idéntico** al del diagnóstico original (verificado carácter por carácter).
+
+### Dónde se publican y por qué así
+
+Los diagnósticos **no viven en este repo**: se copian a un repo aparte de portafolio con
+GitHub Pages (📤 Publicar en el portafolio, configurando la carpeta local en ⚙️ Ajustes).
+Así el repo del CRM queda solo con código y ningún nombre de cliente entra a su historial
+de git, que es para siempre.
+
+El botón solo copia archivos. El `git add / commit / push` lo das tú, para que nada salga
+a internet sin que lo revises antes.
+
+**La carpeta lleva un token aleatorio, no el nombre del negocio** (`dx-rSskwNBAokTMtKll`).
+La URL es la única protección del documento: con el nombre dentro, cualquiera podría
+adivinar links probando negocios. Además la página va con `noindex, nofollow`, así que no
+aparece en buscadores. Quien tenga el link lo ve — mándalo solo al prospecto.
+
+El token es estable: regenerar el diagnóstico de un lead no invalida un link ya enviado.
 
 ### Lo que no se parametriza, a propósito
 

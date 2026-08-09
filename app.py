@@ -896,7 +896,11 @@ def _tab_generar_diagnostico() -> None:
             int(lead_id), tipo="Nota",
             detalle=f"Diagnóstico generado con {len(seleccionados)} hallazgo(s).",
         )
-        st.session_state["dx_resultado"] = {**resultado, "archivo": str(resultado["archivo"])}
+        st.session_state["dx_resultado"] = {
+            **resultado,
+            "archivo": str(resultado["archivo"]),
+            "carpeta": str(resultado["carpeta"]),
+        }
         st.rerun()
 
     if not seleccionados:
@@ -906,15 +910,31 @@ def _tab_generar_diagnostico() -> None:
     if resultado:
         st.success(f"Diagnóstico generado en `{resultado['archivo']}`")
         st.code(resultado["url"], language=None)
+        st.caption(
+            "La carpeta lleva un token impredecible y la página va con `noindex`: "
+            "no sale en Google y el link no se puede adivinar. Quien lo tenga, lo ve — "
+            "mándalo solo al prospecto."
+        )
         if not db.get_ajuste("base_url_diagnosticos", ""):
             st.warning(
                 "Configura la **URL base de diagnósticos** en ⚙️ Datos y ajustes para que "
-                "el link sea completo (ej. https://gerardobr01.github.io)."
+                "el link salga completo."
             )
+
+        g1, g2 = st.columns(2)
         with open(resultado["archivo"], "rb") as f:
-            st.download_button("⬇️ Descargar el HTML", f.read(),
+            g1.download_button("⬇️ Descargar el HTML", f.read(),
                                file_name=f"diagnostico-{resultado['slug']}.html",
-                               mime="text/html")
+                               mime="text/html", width="stretch")
+        if g2.button("📤 Publicar en el portafolio", width="stretch"):
+            try:
+                destino = diagnostico.publicar(Path(resultado["carpeta"]))
+                st.success(f"Copiado a `{destino}`")
+                st.caption("Falta el paso que decides tú: revisa, y luego en esa carpeta")
+                st.code(f'git add . && git commit -m "diagnóstico nuevo" && git push',
+                        language="bash")
+            except Exception as exc:
+                st.error(str(exc))
 
     # ---- Estado del envío y de la apertura ----
     st.divider()
@@ -1132,9 +1152,16 @@ def vista_datos() -> None:
         base_url = st.text_input(
             "URL base de los diagnósticos",
             value=db.get_ajuste("base_url_diagnosticos"),
-            placeholder="https://gerardobr01.github.io",
-            help="Dónde quedan publicados los diagnósticos (GitHub Pages). Se usa para "
-                 "armar el link que le mandas al prospecto.",
+            placeholder="https://gerardobr01.github.io/portafolio",
+            help="Dónde quedan publicados los diagnósticos (GitHub Pages del repo de "
+                 "portafolio). Se usa para armar el link que le mandas al prospecto.",
+        )
+        ruta_portafolio = st.text_input(
+            "Carpeta local del repo de portafolio",
+            value=db.get_ajuste("ruta_repo_portafolio"),
+            placeholder=r"C:\Users\jesus\portafolio",
+            help="Dónde tienes clonado el repo de portafolio. El botón «Publicar» copia "
+                 "ahí el diagnóstico; el commit y el push los das tú.",
         )
         gc_sitio = st.text_input(
             "Sitio de Goatcounter",
@@ -1146,6 +1173,7 @@ def vista_datos() -> None:
             db.set_ajuste("nombre_remitente", nombre.strip() or "Gerardo")
             db.set_ajuste("lada_default", "".join(c for c in lada if c.isdigit()) or "52")
             db.set_ajuste("base_url_diagnosticos", base_url.strip())
+            db.set_ajuste("ruta_repo_portafolio", ruta_portafolio.strip())
             db.set_ajuste("goatcounter_sitio", gc_sitio.strip())
             st.toast("Ajustes guardados", icon="✅")
             st.rerun()

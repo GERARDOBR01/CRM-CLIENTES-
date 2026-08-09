@@ -480,6 +480,16 @@ def construir_html(
     )
 
 
+def carpeta_publicacion(token: str) -> str:
+    """Nombre de la carpeta pública del diagnóstico.
+
+    Lleva el token y NO el nombre del negocio: la URL es la única protección del
+    documento, así que tiene que ser impredecible. Con el nombre dentro, cualquiera
+    podría adivinar links probando negocios.
+    """
+    return f"dx-{token}"
+
+
 def generar_para_lead(
     lead: dict,
     dolores: list[dict],
@@ -488,17 +498,17 @@ def generar_para_lead(
     premisa: str = PREMISA_DEFAULT,
     directorio: Path | None = None,
 ) -> dict:
-    """Escribe `/diagnosticos/{slug}/index.html` para el lead y devuelve rutas y URL.
+    """Escribe `diagnosticos/dx-{token}/index.html` y devuelve rutas y URL.
 
-    El token de seguimiento se conserva si el lead ya tenía uno, para no invalidar
-    un link que ya se envió.
+    El token se conserva si el lead ya tenía uno, para no invalidar un link ya
+    enviado.
     """
     directorio = directorio or DIRECTORIO_SALIDA
-    carpeta_slug = slug(lead.get("negocio", ""))
+    token = (lead.get("token_diagnostico") or "").strip() or nuevo_token()
+    carpeta_slug = carpeta_publicacion(token)
     destino = Path(directorio) / carpeta_slug
     destino.mkdir(parents=True, exist_ok=True)
 
-    token = (lead.get("token_diagnostico") or "").strip() or nuevo_token(carpeta_slug)
     sitio = db.get_ajuste("goatcounter_sitio", "")
 
     contenido = construir_html(
@@ -516,25 +526,49 @@ def generar_para_lead(
 
     return {
         "archivo": archivo,
-        "slug": carpeta_slug,
+        "carpeta": destino,
+        "slug": slug(lead.get("negocio", "")),  # solo para nombrar la descarga local
         "token": token,
-        "url": url_publica(carpeta_slug, token),
+        "url": url_publica(token),
         "generado_en": date.today().isoformat(),
     }
 
 
-def nuevo_token(base: str = "") -> str:
-    """Token corto y único para identificar la visita de este lead."""
+def nuevo_token() -> str:
+    """Token impredecible. Es lo único que protege el documento: quien tenga el
+    link lo ve, así que no puede contener el nombre del negocio ni adivinarse."""
     import secrets
 
-    return f"{slug(base)[:18]}-{secrets.token_hex(3)}" if base else secrets.token_hex(6)
+    return secrets.token_urlsafe(12)
 
 
-def url_publica(carpeta_slug: str, token: str) -> str:
+def url_publica(token: str) -> str:
     """URL final del diagnóstico, según la base configurada en ajustes."""
     base = (db.get_ajuste("base_url_diagnosticos", "") or "").strip().rstrip("/")
-    ruta = f"/diagnostico-{carpeta_slug}/?ref={token}"
+    ruta = f"/{carpeta_publicacion(token)}/"
     return f"{base}{ruta}" if base else ruta
+
+
+def publicar(carpeta_generada: Path) -> Path:
+    """Copia el diagnóstico al repo de portafolio configurado en ajustes.
+
+    Solo copia archivos: el `git add/commit/push` lo haces tú, para que nada salga
+    a internet sin que lo revises antes.
+    """
+    import shutil
+
+    destino_base = (db.get_ajuste("ruta_repo_portafolio", "") or "").strip()
+    if not destino_base:
+        raise ValueError(
+            "Falta la ruta del repo de portafolio en ⚙️ Datos y ajustes."
+        )
+    raiz = Path(destino_base).expanduser()
+    if not raiz.exists():
+        raise ValueError(f"La ruta del repo de portafolio no existe: {raiz}")
+
+    destino = raiz / Path(carpeta_generada).name
+    shutil.copytree(carpeta_generada, destino, dirs_exist_ok=True)
+    return destino
 
 
 if __name__ == "__main__":

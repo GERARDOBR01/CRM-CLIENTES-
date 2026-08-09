@@ -139,6 +139,7 @@ AJUSTES_DEFAULT = {
     "lada_default": "52",
     "base_url_diagnosticos": "",
     "goatcounter_sitio": "",
+    "ruta_repo_portafolio": "",
 }
 
 _ESQUEMA = """

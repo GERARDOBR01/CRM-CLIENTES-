@@ -144,20 +144,35 @@ def ficha_lead(lead: dict) -> None:
 
 @st.cache_resource
 def seed_inicial() -> str | None:
-    """La primera vez que se corre la app (base vacía), carga los leads del
-    `leads_tracker.xlsx` si lo encuentra. Se ejecuta una sola vez por sesión del
-    servidor gracias a cache_resource."""
+    """Con la base vacía, carga datos iniciales una sola vez.
+
+    Primero busca el `leads_tracker.xlsx` (el arranque real, en la PC de Gerardo).
+    Si no está — que es el caso en un despliegue en la nube — cae al
+    `leads_ejemplo.csv` de datos ficticios, para que la app se vea funcionando en
+    vez de aparecer vacía.
+    """
     if db.get_ajuste("seed_hecho", "0") == "1" or db.resumen()["total"] > 0:
         db.set_ajuste("seed_hecho", "1")
         return None
+
     for ruta in migrate_excel.RUTAS_CANDIDATAS:
         if ruta.exists():
             try:
                 res = migrate_excel.importar(ruta)
             except Exception:
-                return None
+                break
             db.set_ajuste("seed_hecho", "1")
             return f"Se cargaron {res['creados']} leads iniciales desde {ruta.name}"
+
+    ejemplo = config.RAIZ / "leads_ejemplo.csv"
+    if ejemplo.exists():
+        try:
+            preparado, _ = importador.preparar(importador.leer_archivo(ejemplo))
+            resultado = importador.insertar(preparado)
+        except Exception:
+            return None
+        db.set_ajuste("seed_hecho", "1")
+        return f"Demo: se cargaron {resultado['agregados']} leads de ejemplo"
     return None
 
 
@@ -168,6 +183,14 @@ def seed_inicial() -> str | None:
 mensaje_seed = seed_inicial()
 if mensaje_seed:
     st.toast(mensaje_seed, icon="📥")
+
+if config.es_demo():
+    st.info(
+        "**Demostración.** Los leads que ves son negocios inventados, no clientes "
+        "reales. Puedes tocar todo: los cambios son temporales y se borran solos "
+        "cuando el servidor se reinicia.",
+        icon="👋",
+    )
 
 res = db.resumen()
 umbral_guardado = int(db.get_ajuste("dias_seguimiento", "4"))

@@ -39,6 +39,16 @@ def ruta_diagnosticos() -> Path:
     return Path(os.environ.get("DIAGNOSTICOS_DIR", RAIZ / "diagnosticos"))
 
 
+def es_demo() -> bool:
+    """Modo demostración: datos ficticios y efímeros.
+
+    Se enciende con `DEMO=1` (o en secrets). Sirve para el despliegue público:
+    quien abra el link tiene que saber que lo que ve es de muestra, y que lo que
+    escriba ahí se borra cuando el contenedor se reinicia.
+    """
+    return secreto("DEMO", "").lower() in ("1", "true", "si", "sí", "yes")
+
+
 # --------------------------------------------------------------------------- #
 # Puerta de acceso
 # --------------------------------------------------------------------------- #

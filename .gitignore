@@ -1,0 +1,33 @@
+# --- Datos reales de prospectos: NUNCA al repo ---
+leads.db
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+leads_tracker.xlsx
+leads_*.csv
+# El de datos ficticios sí se versiona (gitignore no admite comentarios en la
+# misma línea que el patrón, tienen que ir aparte).
+!leads_ejemplo.csv
+crm_respaldo_*.zip
+# `diagnosticos/*` y no `diagnosticos/`: git no entra a un directorio ignorado,
+# así que la negación del .gitkeep no funcionaría.
+diagnosticos/*
+!diagnosticos/.gitkeep
+
+# --- Credenciales ---
+.env
+.streamlit/secrets.toml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Sistema ---
+Thumbs.db
+desktop.ini
+.DS_Store

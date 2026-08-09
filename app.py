@@ -1042,7 +1042,7 @@ def vista_cargar() -> None:
             "Solo **negocio** es obligatoria. El resto es opcional y lo que falte se "
             "deja vacío para completarlo después desde la app:\n\n"
             + "\n".join(
-                f"- `{c}` — {importador.ETIQUETAS[c]}" + ("  ← obligatoria" if c == "negocio" else "")
+                f"- `{c}` — {importador.etiqueta(c)}" + ("  ← obligatoria" if c == "negocio" else "")
                 for c in importador.COLUMNAS_ESPERADAS
             )
             + "\n\nLos encabezados se reconocen sin importar acentos, mayúsculas ni "
@@ -1094,10 +1094,13 @@ def vista_cargar() -> None:
     tabla = preparado[preparado["_estado"].isin(importador.ESTADOS_INSERTABLES)] if solo_nuevos else preparado
 
     st.dataframe(
-        tabla.rename(columns={**importador.ETIQUETAS, "_estado": "Estado"}),
+        tabla.rename(columns={
+            **{c: importador.etiqueta(c) for c in importador.COLUMNAS_ESPERADAS},
+            "_estado": "Estado",
+        }),
         width="stretch",
         hide_index=True,
-        column_order=["Estado", *[importador.ETIQUETAS[c] for c in importador.COLUMNAS_ESPERADAS]],
+        column_order=["Estado", *[importador.etiqueta(c) for c in importador.COLUMNAS_ESPERADAS]],
     )
     st.caption(
         f"{importador.ESTADO_SIN_MENSAJE} = se inserta igual, pero hay que escribirle el "

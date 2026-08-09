@@ -22,6 +22,7 @@ OBLIGATORIAS = ["negocio"]
 # Etiquetas legibles para la vista previa.
 ETIQUETAS = {
     "negocio": "Negocio",
+    "contacto": "Persona de contacto",
     "categoria": "Categoría",
     "sector": "Sector",
     "direccion": "Dirección",
@@ -32,6 +33,12 @@ ETIQUETAS = {
     "track_recomendado": "Track recomendado",
     "senales_investigacion": "Señales de investigación",
 }
+
+def etiqueta(campo: str) -> str:
+    """Nombre legible de un campo. Si alguien agrega un campo importable y olvida
+    su etiqueta, devuelve el nombre técnico en vez de tumbar la vista con KeyError."""
+    return ETIQUETAS.get(campo, campo.replace("_", " ").capitalize())
+
 
 ESTADO_NUEVO = "🟢 Nuevo"
 ESTADO_SIN_MENSAJE = "🟡 Nuevo · falta mensaje"

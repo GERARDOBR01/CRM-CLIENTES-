@@ -15,20 +15,27 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 import config
 import db
 import diagnostico
 import importador
+import mensajes
 import metricas
 import migrate_excel
+import movil
 import plantillas
 import scoring
 import tracking
 import whatsapp
 
-st.set_page_config(page_title="CRM Leads · Outreach", page_icon="📇", layout="wide")
+st.set_page_config(page_title="CRM Certeza · Leads", page_icon="✅", layout="wide")
+
+# Antes del muro de contraseña: así el icono de "agregar a pantalla de inicio"
+# funciona también desde la pantalla de acceso, que es la primera que se ve al
+# instalar la app en el celular.
+movil.montar_pwa()
+movil.estilos()
 
 # Muro de contraseña: solo estorba si CRM_PASSWORD está configurada (es decir, en la
 # nube). En localhost no aparece.
@@ -71,34 +78,51 @@ def ir_a(vista: str, lead_id: int | None = None) -> None:
 
 
 def boton_copiar(texto: str, etiqueta: str = "📋 Copiar mensaje", key: str = "copy") -> None:
-    """Boton de copiado al portapapeles (con fallback para navegadores viejos)."""
+    """Boton de copiado al portapapeles (con fallback para navegadores viejos).
+
+    Va con `st.html` y no con `components.html` porque este último quedó deprecado
+    en junio de 2026, y además metía el botón dentro de un iframe de altura fija:
+    en el celular eso dejaba un hueco y el botón no se alineaba con los de al lado.
+    """
     payload = json.dumps(texto)
-    components.html(
+    st.html(
         f"""
         <button id="btn-{key}" style="
-            width:100%; padding:.55rem 1rem; cursor:pointer; font-size:.9rem;
-            border-radius:.5rem; border:1px solid rgba(128,128,128,.4);
+            width:100%; min-height:44px; padding:.55rem 1rem; cursor:pointer;
+            font-size:.9rem; border-radius:.5rem; border:1px solid rgba(128,128,128,.4);
             background:transparent; color:inherit; font-family:inherit;">
             {html_mod.escape(etiqueta)}
         </button>
         <script>
-        const btn = document.getElementById("btn-{key}");
-        const txt = {payload};
-        btn.addEventListener("click", async () => {{
-            try {{
-                await navigator.clipboard.writeText(txt);
-            }} catch (e) {{
-                const ta = document.createElement("textarea");
-                ta.value = txt; document.body.appendChild(ta); ta.select();
-                document.execCommand("copy"); document.body.removeChild(ta);
+        // Todo dentro de una función: sin el iframe de components.html, cada botón
+        // de copiar comparte el ámbito global de la página. Un `const btn` suelto se
+        // redeclararía en la segunda tarjeta y tumbaría el script de todas.
+        (function () {{
+          var btn = document.getElementById("btn-{key}");
+          if (!btn || btn.dataset.listo) return;
+          btn.dataset.listo = "1";
+          var txt = {payload};
+          btn.addEventListener("click", function () {{
+            var aviso = function () {{
+              var original = btn.innerHTML;
+              btn.innerHTML = "✅ Copiado";
+              setTimeout(function () {{ btn.innerHTML = original; }}, 1500);
+            }};
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+              navigator.clipboard.writeText(txt).then(aviso, function () {{ respaldo(); }});
+            }} else {{ respaldo(); }}
+            function respaldo() {{
+              var ta = document.createElement("textarea");
+              ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+              document.body.appendChild(ta); ta.select();
+              try {{ document.execCommand("copy"); }} catch (e) {{}}
+              document.body.removeChild(ta); aviso();
             }}
-            const original = btn.innerHTML;
-            btn.innerHTML = "✅ Copiado";
-            setTimeout(() => btn.innerHTML = original, 1500);
-        }});
+          }});
+        }})();
         </script>
         """,
-        height=48,
+        unsafe_allow_javascript=True,
     )
 
 
@@ -106,22 +130,28 @@ def abrir_whatsapp(url: str, key: str) -> None:
     """Intenta abrir wa.me en una pestaña nueva y deja un link de respaldo.
 
     El auto-open puede ser bloqueado por el navegador (es una pestaña abierta sin
-    gesto directo del usuario), por eso siempre se muestra el link manual.
+    gesto directo del usuario), por eso siempre se muestra el link manual — que en
+    el celular suele ser el que termina usándose.
     """
     seguro = html_mod.escape(url, quote=True)
-    components.html(
+    st.html(
         f"""
-        <script>
-          try {{ window.open({json.dumps(url)}, "_blank", "noopener"); }} catch (e) {{}}
-        </script>
-        <a href="{seguro}" target="_blank" rel="noopener" style="
-            display:block; text-align:center; padding:.6rem 1rem; text-decoration:none;
+        <a id="wa-{key}" href="{seguro}" target="_blank" rel="noopener" style="
+            display:block; text-align:center; padding:.75rem 1rem; text-decoration:none;
             border-radius:.5rem; background:#25D366; color:#0b2e1a; font-weight:600;
-            font-family:inherit; font-size:.9rem;">
+            font-family:inherit; font-size:.95rem; min-height:44px; box-sizing:border-box;">
             ↗ Abrir WhatsApp (si no se abrió solo)
         </a>
+        <script>
+        (function () {{
+          var a = document.getElementById("wa-{key}");
+          if (!a || a.dataset.abierto) return;   // no reabrir en cada rerun
+          a.dataset.abierto = "1";
+          try {{ window.open({json.dumps(url)}, "_blank", "noopener"); }} catch (e) {{}}
+        }})();
+        </script>
         """,
-        height=56,
+        unsafe_allow_javascript=True,
     )
 
 
@@ -140,6 +170,154 @@ def ficha_lead(lead: dict) -> None:
     c3.metric("Valor est.", f"${float(lead.get('valor_estimado') or 0):,.0f}")
     c4.metric("Último contacto", lead.get("fecha_contacto") or "Nunca")
     c5.metric("Días sin seguimiento", dias if dias is not None else "—")
+
+
+def boton_deshacer(lead: dict, key: str) -> None:
+    """Revierte el último envío registrado.
+
+    El botón de WhatsApp marca contactado en cuanto se toca, y en una pantalla de
+    seis pulgadas eso pasa sin querer. Sin esto, la única salida era editar la base
+    a mano — que es justo lo que un CRM debería evitar.
+    """
+    lead_id = int(lead["id"])
+    if not db.puede_deshacer(lead_id):
+        return
+    if st.button("↩️ Deshacer último envío", key=key, width="stretch",
+                 help="Lo borra del historial, regresa la fecha de contacto y, si era el "
+                      "único envío, devuelve el lead a «Sin contactar»."):
+        actualizado = db.deshacer_ultimo_contacto(lead_id)
+        if actualizado:
+            st.session_state.pop(f"msg_{lead_id}", None)
+            st.toast(f"Envío revertido · {actualizado['estatus']}", icon="↩️")
+        st.rerun()
+
+
+def registrar_envio(lead: dict, mensaje: str, canal: str, tipo: str,
+                    texto_generado: str = "") -> None:
+    """Deja constancia del envío y aprende de él.
+
+    Dos cosas que el botón de WhatsApp por sí solo no hacía:
+
+    1. Guarda en el historial **qué gancho y qué variantes** se usaron. Sin ese dato
+       no hay forma de saber qué mensajes funcionan, y ese dato vale más que
+       cualquier suposición sobre el tono correcto.
+    2. Si Gerardo editó el texto antes de mandarlo, conserva su versión como la
+       plantilla del lead. Si no lo tocó, no se guarda nada: así el mensaje se sigue
+       regenerando solo cuando aparezcan datos nuevos del negocio.
+    """
+    lead_id = int(lead["id"])
+    db.marcar_contactado(
+        lead_id, mensaje=mensaje, canal=canal, tipo=tipo,
+        detalle=st.session_state.get(f"firma_{lead_id}", ""),
+    )
+    editado = mensaje.strip() and mensaje.strip() != (texto_generado or "").strip()
+    if editado and mensaje.strip() != (lead.get("mensaje_plantilla") or "").strip():
+        db.actualizar_lead(lead_id, mensaje_plantilla=mensaje.strip())
+
+
+def bloque_datos_generador(lead: dict) -> None:
+    """Captura de lo que alimenta al generador de mensajes.
+
+    Aquí no se redacta nada **a propósito**: son dos menús, tres números y dos
+    casillas. Pedir un gancho escrito a mano por lead parece solución, pero solo
+    mueve el trabajo manual de lugar — 24 leads serían 24 frases que escribir. Con
+    hechos sueltos, la frase la arma el generador.
+
+    Todos los campos son opcionales. Entre más llenos, más concreto suena el mensaje;
+    con ninguno lleno igual sale mensaje, solo que genérico.
+    """
+    lead_id = int(lead["id"])
+    tipo_actual = lead.get("tipo_dolor") or ""
+    hechos = [c for c in db.CAMPOS_MENSAJE if c not in ("tipo_dolor", "tipo_destinatario")]
+    llenos = sum(1 for c in hechos if str(lead.get(c) or "").strip() not in ("", "0", "None"))
+
+    titulo = "🎯 Datos para el mensaje"
+    if tipo_actual:
+        titulo += f" — {db.ETIQUETAS_TIPO_DOLOR.get(tipo_actual, tipo_actual)} · {llenos}/{len(hechos)} hechos"
+    else:
+        titulo += " — ⚠️ sin clasificar"
+
+    with st.expander(titulo, expanded=not tipo_actual):
+        with st.form(f"gen_{lead_id}"):
+            c1, c2 = st.columns(2)
+            opciones_dolor = ["", *db.TIPOS_DOLOR]
+            tipo_dolor = c1.selectbox(
+                "¿Qué le duele?",
+                opciones_dolor,
+                index=opciones_dolor.index(tipo_actual) if tipo_actual in opciones_dolor else 0,
+                format_func=lambda t: db.ETIQUETAS_TIPO_DOLOR.get(t, t),
+                help="Define el gancho y el servicio que se menciona. Es lo único "
+                     "verdaderamente necesario para que el mensaje tenga sustancia.",
+            )
+            dest_actual = lead.get("tipo_destinatario") or "desconocido"
+            tipo_destinatario = c2.selectbox(
+                "¿A quién le escribes?",
+                db.TIPOS_DESTINATARIO,
+                index=db.TIPOS_DESTINATARIO.index(dest_actual)
+                if dest_actual in db.TIPOS_DESTINATARIO else len(db.TIPOS_DESTINATARIO) - 1,
+                format_func=lambda t: db.ETIQUETAS_TIPO_DESTINATARIO.get(t, t),
+                help="A recepción NO se le vende: se le pide que lo pase a quien decide.",
+            )
+            tratamiento = st.text_input(
+                "Tratamiento", value=lead.get("tratamiento") or "",
+                placeholder="Dr. Pérez · Mtra. Gómez · (vacío = «Hola, buen día»)",
+            )
+
+            st.caption("**Hechos** — solo lo que hayas verificado. Vacío es mejor que inventado.")
+            n1, n2, n3 = st.columns(3)
+            num_sucursales = n1.number_input(
+                "Sucursales", min_value=0, step=1, value=db.entero_o_none(lead.get("num_sucursales")),
+                placeholder="—",
+            )
+            num_resenas = n2.number_input(
+                "Reseñas", min_value=0, step=1, value=db.entero_o_none(lead.get("num_resenas")),
+                placeholder="—", help="El número de reseñas, no la calificación.",
+            )
+            num_profesionales = n3.number_input(
+                "Profesionales", min_value=0, step=1,
+                value=db.entero_o_none(lead.get("num_profesionales")), placeholder="—",
+            )
+
+            t1, t2 = st.columns(2)
+            sistema_detectado = t1.text_input(
+                "Sistema que ya usan", value=lead.get("sistema_detectado") or "",
+                placeholder="LeadConnector, app de reservas…",
+            )
+            canales_detectados = t2.text_input(
+                "Canales por los que les escriben", value=lead.get("canales_detectados") or "",
+                placeholder="WhatsApp e Instagram",
+            )
+
+            k1, k2 = st.columns(2)
+            horario_extendido = k1.checkbox(
+                "Horario extendido", value=db.booleano(lead.get("horario_extendido")) == 1,
+                help="Abre más de 12 h, fines de semana o los 7 días.",
+            )
+            publico_extranjero = k2.checkbox(
+                "Público extranjero", value=db.booleano(lead.get("publico_extranjero")) == 1,
+                help="Hay señal de clientes de fuera: reseñas en inglés, turismo médico…",
+            )
+
+            if st.form_submit_button("💾 Guardar y regenerar", type="primary"):
+                db.actualizar_lead(
+                    lead_id,
+                    tipo_dolor=tipo_dolor,
+                    tipo_destinatario=tipo_destinatario,
+                    tratamiento=tratamiento,
+                    num_sucursales=num_sucursales,
+                    num_resenas=num_resenas,
+                    num_profesionales=num_profesionales,
+                    sistema_detectado=sistema_detectado,
+                    canales_detectados=canales_detectados,
+                    horario_extendido=horario_extendido,
+                    publico_extranjero=publico_extranjero,
+                )
+                # El mensaje en pantalla se armó con los datos viejos: se descarta
+                # para que al recargar salga con los nuevos.
+                st.session_state.pop(f"msg_{lead_id}", None)
+                st.session_state.pop(f"firma_{lead_id}", None)
+                st.toast("Datos guardados · mensaje regenerado", icon="🎯")
+                st.rerun()
 
 
 @st.cache_resource
@@ -196,8 +374,8 @@ res = db.resumen()
 umbral_guardado = int(db.get_ajuste("dias_seguimiento", "4"))
 
 with st.sidebar:
-    st.title("📇 CRM de Leads")
-    st.caption("Herramienta local · SQLite · un solo usuario")
+    st.title("✅ CRM Certeza")
+    st.caption("Leads, diagnósticos y outreach por WhatsApp")
 
     st.radio("Vista", VISTAS, key="vista", label_visibility="collapsed")
 
@@ -266,6 +444,75 @@ def vista_leads() -> None:
                    "Es el número honesto para planear.")
     p3.metric("Ganado", f"${plata['ganado']:,.0f}")
 
+    # Tarjetas en el celular, tabla en escritorio. Se pintan las dos y el CSS de
+    # `movil.py` esconde la que no toca según el ancho de pantalla: Streamlit no
+    # expone el viewport del lado del servidor, así que decidirlo en CSS es lo único
+    # que funciona sin recargar la página para medirla.
+    with st.container(key=movil.SOLO_MOVIL):
+        _tarjetas_leads(df)
+
+    with st.container(key=movil.SOLO_ESCRITORIO):
+        _tabla_leads(df, vista_df, editor_key, version)
+
+    st.divider()
+    st.subheader("Ir al detalle")
+    opciones = df["id"].tolist()
+    sel = st.selectbox(
+        "Lead",
+        opciones,
+        format_func=lambda i: f"{COLOR_ESTATUS.get(df.loc[df['id'] == i, 'estatus'].iloc[0], '')} "
+                              f"{df.loc[df['id'] == i, 'negocio'].iloc[0]}",
+        label_visibility="collapsed",
+    )
+    st.button(
+        "💬 Preparar mensaje para este lead",
+        type="primary",
+        on_click=ir_a,
+        args=(VISTAS[2], sel),
+    )
+
+
+MAX_TARJETAS_LEADS = 20
+
+
+def _tarjetas_leads(df: pd.DataFrame) -> None:
+    """La lista de leads para el pulgar: una columna, lo esencial y dos acciones."""
+    st.caption(
+        f"Mostrando {min(len(df), MAX_TARJETAS_LEADS)} de {len(df)}. "
+        "Usa los filtros o el buscador de arriba para acotar."
+        if len(df) > MAX_TARJETAS_LEADS else f"{len(df)} lead(s)."
+    )
+    lada = db.get_ajuste("lada_default", "52")
+    mi_nombre = db.get_ajuste("nombre_remitente", "Gerardo")
+
+    for lead in df.head(MAX_TARJETAS_LEADS).to_dict("records"):
+        lead_id = int(lead["id"])
+        with st.container(border=True):
+            st.markdown(f"**{lead['negocio']}**")
+            dias = lead.get("dias_desde_contacto")
+            st.caption(
+                f"{COLOR_ESTATUS.get(lead['estatus'], '')} {lead['estatus']} · "
+                f"{lead.get('sector') or '—'} · ${float(lead.get('valor_estimado') or 0):,.0f}"
+                + (f" · {dias}d sin seguimiento" if dias is not None else " · nunca contactado")
+            )
+            url = whatsapp.link_whatsapp(
+                lead["telefono"],
+                plantillas.render(lead["mensaje_plantilla"], lead, mi_nombre)
+                or mensajes.generar(lead, mi_nombre).texto,
+                lada,
+            )
+            t1, t2 = st.columns(2)
+            t1.button("💬 Preparar", key=f"tj_det_{lead_id}", width="stretch",
+                      type="primary", on_click=ir_a, args=(VISTAS[2], lead_id))
+            if url:
+                t2.link_button("📲 WhatsApp", url, width="stretch")
+            else:
+                t2.button("📲 Sin teléfono", key=f"tj_sin_{lead_id}", disabled=True,
+                          width="stretch")
+
+
+def _tabla_leads(df: pd.DataFrame, vista_df: pd.DataFrame, editor_key: str, version: int) -> None:
+    """La tabla editable completa. Solo escritorio: 17 columnas no se usan con el pulgar."""
     st.data_editor(
         vista_df,
         key=editor_key,
@@ -331,23 +578,6 @@ def vista_leads() -> None:
 
     if pendientes:
         c2.warning("Tienes cambios sin guardar en la tabla.")
-
-    st.divider()
-    st.subheader("Ir al detalle")
-    opciones = df["id"].tolist()
-    sel = st.selectbox(
-        "Lead",
-        opciones,
-        format_func=lambda i: f"{COLOR_ESTATUS.get(df.loc[df['id'] == i, 'estatus'].iloc[0], '')} "
-                              f"{df.loc[df['id'] == i, 'negocio'].iloc[0]}",
-        label_visibility="collapsed",
-    )
-    st.button(
-        "💬 Preparar mensaje para este lead",
-        type="primary",
-        on_click=ir_a,
-        args=(VISTAS[2], sel),
-    )
 
 
 def guardar_edicion_tabla(vista_df: pd.DataFrame, cambios: dict) -> None:
@@ -430,35 +660,75 @@ def vista_detalle() -> None:
     mi_nombre = db.get_ajuste("nombre_remitente", "Gerardo")
     lada = db.get_ajuste("lada_default", "52")
 
+    bloque_datos_generador(lead)
+
     st.markdown("### Mensaje")
     faltantes = plantillas.variables_faltantes(lead["mensaje_plantilla"])
     if faltantes:
         st.warning(f"La plantilla usa variables que no existen: {', '.join('{'+f+'}' for f in faltantes)}")
 
-    if not (lead["mensaje_plantilla"] or "").strip():
-        st.info(
-            "Este lead no trae mensaje propio (viene de una carga sin esa columna). "
-            "Abajo está la plantilla genérica: personalízala antes de mandarla, y guárdala "
-            "en *Actualizar estatus…* si quieres reutilizarla."
+    tiene_telefono = whatsapp.limpiar_telefono(lead["telefono"], lada) is not None
+    key_canal = f"canal_{lead_id}"
+    # Sin teléfono el contacto sale por DM, y un DM de 90 palabras no se lee. El
+    # canal se preselecciona solo, pero se puede cambiar.
+    if key_canal not in st.session_state:
+        st.session_state[key_canal] = "WhatsApp" if tiene_telefono else "DM (Instagram)"
+
+    key_msg = f"msg_{lead_id}"
+    key_firma = f"firma_{lead_id}"
+
+    g1, g2 = st.columns([2, 3])
+    canal = g1.radio(
+        "Canal", ["WhatsApp", "DM (Instagram)"], key=key_canal, horizontal=True,
+        help="El DM se corta a 50 palabras: ahí no se detallan servicios, eso va en "
+             "la respuesta si contesta.",
+    )
+    generado = mensajes.generar(
+        lead, mi_nombre, canal="dm" if canal.startswith("DM") else "whatsapp"
+    )
+    if g2.button("✨ Generar mensaje", type="primary", width="stretch",
+                 help="Arma el mensaje con el gancho de este lead. Lo revisas y lo mandas tú."):
+        st.session_state[key_msg] = generado.texto
+        st.session_state[key_firma] = generado.firma()
+        st.rerun()
+
+    if generado.faltantes:
+        st.warning(
+            "Este lead no tiene **tipo de dolor** clasificado, así que el mensaje sale sin "
+            "gancho y sin servicio. Clasifícalo arriba en *Datos para el mensaje* — es un "
+            "menú, no hay nada que redactar.",
+            icon="🎯",
         )
 
-    base = plantillas.render(lead["mensaje_plantilla"], lead, mi_nombre) or plantillas.render(
-        plantillas.PLANTILLA_NUEVA, lead, mi_nombre
-    )
-
-    # El texto editado vive por lead, para que cambiar de lead no arrastre el anterior.
-    key_msg = f"msg_{lead_id}"
+    # De dónde sale el texto la primera vez que se abre el lead: si ya tiene un
+    # mensaje propio guardado, ese manda; si no, el generado.
     if key_msg not in st.session_state:
-        st.session_state[key_msg] = base
+        guardado = plantillas.render(lead["mensaje_plantilla"], lead, mi_nombre)
+        st.session_state[key_msg] = guardado or generado.texto
+        if not guardado:
+            st.session_state[key_firma] = generado.firma()
 
-    mensaje = st.text_area("Mensaje final (editable antes de enviar)", key=key_msg, height=170)
+    mensaje = st.text_area("Mensaje final (editable antes de enviar)", key=key_msg, height=190)
 
+    palabras = mensajes.contar_palabras(mensaje)
+    limite = generado.limite
     m1, m2 = st.columns([3, 1])
-    m1.caption(f"{len(mensaje)} caracteres · variables: "
-               + ", ".join("{" + v + "}" for v in plantillas.VARIABLES))
-    if m2.button("↻ Restaurar plantilla", width="stretch",
-                 help="Vuelve a generar el mensaje desde la plantilla guardada."):
-        del st.session_state[key_msg]
+    m1.caption(
+        f"{palabras} palabras de {limite} · {len(mensaje)} caracteres"
+        + (f" · gancho: {db.ETIQUETAS_TIPO_DOLOR.get(generado.tipo_dolor, '—')}"
+           f" · a: {db.ETIQUETAS_TIPO_DESTINATARIO.get(generado.tipo_destinatario, '—')}"
+           if generado.tipo_dolor else "")
+    )
+    if palabras > limite:
+        st.warning(
+            f"Van {palabras} palabras y el límite de este canal son {limite}. "
+            "Los mensajes largos de alguien que no conoces no se leen.",
+            icon="✂️",
+        )
+    if m2.button("↻ Restaurar", width="stretch",
+                 help="Descarta lo editado y vuelve a armar el mensaje."):
+        st.session_state.pop(key_msg, None)
+        st.session_state.pop(key_firma, None)
         st.rerun()
 
     url = whatsapp.link_whatsapp(lead["telefono"], mensaje, lada)
@@ -472,11 +742,10 @@ def vista_detalle() -> None:
                 type="primary",
                 width="stretch",
             ):
-                db.marcar_contactado(
-                    lead_id,
-                    mensaje=mensaje,
-                    canal="WhatsApp",
+                registrar_envio(
+                    lead, mensaje, canal="WhatsApp",
                     tipo="Seguimiento" if lead["estatus"] == "Contactado" else "Mensaje inicial",
+                    texto_generado=generado.texto,
                 )
                 st.session_state["wa_abrir"] = {"url": url, "lead": lead["negocio"]}
                 st.rerun()
@@ -494,7 +763,8 @@ def vista_detalle() -> None:
     with col3:
         if st.button("✍️ Marcar contactado a mano", width="stretch",
                      help="Úsalo si contactaste por Instagram, Facebook o llamada."):
-            db.marcar_contactado(lead_id, mensaje=mensaje, canal=lead["plataforma"], tipo="Mensaje inicial")
+            registrar_envio(lead, mensaje, canal=lead["plataforma"], tipo="Mensaje inicial",
+                            texto_generado=generado.texto)
             st.rerun()
 
     if whatsapp.url_demasiado_larga(url):
@@ -508,6 +778,8 @@ def vista_detalle() -> None:
     if pendiente:
         st.success(f"Estatus actualizado a **Contactado** · fecha {date.today().isoformat()}")
         abrir_whatsapp(pendiente["url"], key=f"wa{lead_id}")
+
+    boton_deshacer(lead, key=f"undo_det_{lead_id}")
 
     if not url:
         st.info(
@@ -551,7 +823,17 @@ def vista_detalle() -> None:
                      f"${db.valor_sugerido(sector_actual, lead['estatus']):,.0f}. "
                      "Diagnóstico $3,500-5,000 · Sistema $12,000-18,000 · Mensualidad $1,500-2,500.",
             )
-            proxima = st.text_input("Próxima acción", value=lead["proxima_accion"] or "")
+            p1, p2 = st.columns([3, 2])
+            proxima = p1.text_input("Próxima acción", value=lead["proxima_accion"] or "")
+            fecha_prox = db.normalizar_fecha(lead.get("fecha_proximo_seguimiento"))
+            nueva_prox = p2.date_input(
+                "¿Quedaste de escribirle un día?",
+                value=date.fromisoformat(fecha_prox) if fecha_prox else None,
+                format="YYYY-MM-DD",
+                help="Si prometiste algo con fecha («le mando el demo el jueves»), ponla "
+                     "aquí. Manda sobre el calendario en los dos sentidos: ese día sale en "
+                     "HOY, y antes de ese día el lead no te va a estar reclamando.",
+            )
             notas = st.text_area("Notas", value=lead["notas"] or "", height=100)
             nueva_plantilla = st.text_area(
                 "Plantilla guardada de este lead",
@@ -571,6 +853,7 @@ def vista_detalle() -> None:
                     sector=nuevo_sector,
                     valor_estimado=nuevo_valor,
                     fecha_contacto=nueva_fecha,
+                    fecha_proximo_seguimiento=nueva_prox,
                     proxima_accion=proxima,
                     notas=notas,
                     mensaje_plantilla=nueva_plantilla,
@@ -634,7 +917,7 @@ def vista_hoy() -> None:
         return
 
     lead_top = accion["lead"]
-    with st.container(border=True):
+    with st.container(border=True, key="accion_hoy"):
         st.caption("SIGUIENTE MEJOR ACCIÓN")
         st.markdown(f"## {accion['frase']}")
         detalle = [
@@ -720,17 +1003,19 @@ def _tarjeta_seguimiento(lead: dict, mi_nombre: str, lada: str) -> None:
         texto = st.text_area("Texto", key=key_seg, height=104, label_visibility="collapsed")
 
         url = whatsapp.link_whatsapp(lead["telefono"], texto, lada)
-        b1, b2, b3 = st.columns([2, 1, 1])
 
+        # El botón de WhatsApp va solo y a todo lo ancho: es la acción más frecuente
+        # del día y en el celular tiene que acertarse sin apuntar.
         if url:
-            if b1.button("📲 Abrir WhatsApp y registrar", key=f"wa_{lead_id}",
+            if st.button("📲 Abrir WhatsApp y registrar", key=f"wa_{lead_id}",
                          type="primary", width="stretch"):
                 db.marcar_contactado(lead_id, mensaje=texto, canal="WhatsApp", tipo="Seguimiento")
                 st.session_state[f"abrir_{lead_id}"] = url
                 st.rerun()
         else:
-            b1.info("Sin teléfono — mándalo por DM y usa *Marcar enviado*.")
+            st.info("Sin teléfono — mándalo por DM y usa *Marcar enviado*.")
 
+        b2, b3 = st.columns(2)
         with b2:
             boton_copiar(texto, "📋 Copiar", key=f"cs{lead_id}")
 
@@ -753,6 +1038,9 @@ def _tarjeta_seguimiento(lead: dict, mi_nombre: str, lada: str) -> None:
         if pendiente_url:
             st.success("Seguimiento registrado en el historial.")
             abrir_whatsapp(pendiente_url, key=f"was{lead_id}")
+            # El deshacer se ofrece justo aquí y no en todas las tarjetas: este es el
+            # instante en que uno se da cuenta de que le dio sin querer.
+            boton_deshacer(lead, key=f"undo_hoy_{lead_id}")
 
 
 # --------------------------------------------------------------------------- #
@@ -999,12 +1287,67 @@ def _puertas_sugeridas(lead: dict) -> str:
 # --------------------------------------------------------------------------- #
 
 def vista_metricas() -> None:
-    st.header("📊 Métricas por sector")
+    st.header("📊 Métricas")
     st.caption(
         "Para decidir dónde enfocar con datos propios en vez de proyecciones. "
         "Con pocos leads los porcentajes son ruidosos — el conteo manda."
     )
 
+    tab_sector, tab_dolor = st.tabs(["Por sector", "Por tipo de dolor"])
+    with tab_dolor:
+        _tab_metricas_dolor()
+    with tab_sector:
+        _tab_metricas_sector()
+
+
+def _tab_metricas_dolor() -> None:
+    """Qué argumento hace que contesten. Es el dato que cierra el ciclo: sin él,
+    el tono de los mensajes se decide por corazonada."""
+    tabla = metricas.por_tipo_dolor()
+    if tabla.empty:
+        st.info("Todavía no hay leads contactados que medir.")
+        return
+
+    st.dataframe(
+        tabla,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "tipo_dolor": st.column_config.TextColumn("Tipo de dolor", width="medium"),
+            "contactados": st.column_config.NumberColumn("Contactados", width="small"),
+            "respondieron": st.column_config.NumberColumn("Respondieron", width="small"),
+            "tasa_respuesta": st.column_config.ProgressColumn(
+                "Tasa de respuesta", min_value=0.0, max_value=1.0, format="%.0f%%"
+            ),
+            "ganados": st.column_config.NumberColumn("Ganados", width="small"),
+            "tasa_cierre": st.column_config.ProgressColumn(
+                "Tasa de cierre", min_value=0.0, max_value=1.0, format="%.0f%%"
+            ),
+            "con_traza": st.column_config.NumberColumn(
+                "Con traza", width="small",
+                help="Leads cuyo mensaje lo armó el generador y quedó registrado qué "
+                     "gancho se usó. Solo esos son medición limpia.",
+            ),
+        },
+    )
+
+    con_traza = int(tabla["con_traza"].sum())
+    total = int(tabla["contactados"].sum())
+    if con_traza < total:
+        st.warning(
+            f"Solo {con_traza} de {total} contactos llevan traza del generador. El resto se "
+            "agrupa por la clasificación actual del lead, que pudo cambiar después de "
+            "haberle escrito. Conforme mandes mensajes generados, esta tabla se vuelve "
+            "medición de verdad y deja de ser indicio.",
+            icon="📉",
+        )
+    st.caption(
+        "**Tasa de respuesta** = leads que llegaron al menos a «Interesado» ÷ contactados. "
+        "Ordenado por tasa: el argumento que más hace contestar aparece arriba."
+    )
+
+
+def _tab_metricas_sector() -> None:
     tabla = metricas.por_sector()
     if tabla.empty:
         st.info("Todavía no hay leads que medir.")

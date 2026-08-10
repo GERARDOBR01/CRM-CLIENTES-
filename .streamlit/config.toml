@@ -1,0 +1,23 @@
+# Configuración de la app. Este archivo SÍ va al repo.
+# Las credenciales viven en `.streamlit/secrets.toml`, que está en .gitignore.
+
+[server]
+# Sirve `static/` en /app/static/ — es lo que hace posible la PWA (manifest e
+# iconos). Sin esto no hay "Agregar a pantalla de inicio".
+enableStaticServing = true
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Un error de Python con el stack completo en pantalla, en una app que va a estar
+# en internet, le enseña rutas y estructura a cualquiera que abra el link.
+showErrorDetails = "none"
+
+[theme]
+base = "dark"
+primaryColor = "#34D399"
+backgroundColor = "#0C1E2A"
+secondaryBackgroundColor = "#13293A"
+textColor = "#E8F1F2"

@@ -32,6 +32,19 @@ ETIQUETAS = {
     "mensaje_plantilla": "Mensaje plantilla",
     "track_recomendado": "Track recomendado",
     "senales_investigacion": "Señales de investigación",
+    "valor_estimado": "Valor estimado (MXN)",
+    # Generador de mensajes (6.5). Se capturan tecleando números y marcando
+    # casillas: nada de aquí se redacta.
+    "tipo_dolor": "Tipo de dolor",
+    "tipo_destinatario": "A quién se le escribe",
+    "tratamiento": "Tratamiento (Dr., Mtra.…)",
+    "num_sucursales": "N.º de sucursales",
+    "num_resenas": "N.º de reseñas",
+    "num_profesionales": "N.º de profesionales",
+    "sistema_detectado": "Sistema detectado",
+    "canales_detectados": "Canales detectados",
+    "horario_extendido": "Horario extendido",
+    "publico_extranjero": "Público extranjero",
 }
 
 def etiqueta(campo: str) -> str:
@@ -69,16 +82,35 @@ REGLAS = [
     ("telefono", "telefono"),
     ("whatsapp", "telefono"),
     ("celular", "telefono"),
-    ("plataforma", "plataforma"),
-    ("canal", "plataforma"),
+    # `tipo de dolor` antes que `dolor`: si no, "Tipo de dolor" caería en
+    # evidencia_dolor y el generador se quedaría sin clasificación en silencio.
+    ("tipodedolor", "tipo_dolor"),
+    ("tipodolor", "tipo_dolor"),
     ("evidencia", "evidencia_dolor"),
     ("dolor", "evidencia_dolor"),
+    # `canales detectados` antes que `canal`, que mapea a plataforma.
+    ("canalesdetectados", "canales_detectados"),
+    ("canales", "canales_detectados"),
+    ("plataforma", "plataforma"),
+    ("canal", "plataforma"),
     ("track", "track_recomendado"),
     ("senales", "senales_investigacion"),
     ("senal", "senales_investigacion"),
     ("investigacion", "senales_investigacion"),
     ("mensaje", "mensaje_plantilla"),
     ("plantilla", "mensaje_plantilla"),
+    # Generador de mensajes (6.5).
+    ("destinatario", "tipo_destinatario"),
+    ("aquien", "tipo_destinatario"),
+    ("tratamiento", "tratamiento"),
+    ("sucursales", "num_sucursales"),
+    ("sucursal", "num_sucursales"),
+    ("resenas", "num_resenas"),
+    ("profesionales", "num_profesionales"),
+    ("sistema", "sistema_detectado"),
+    ("horario", "horario_extendido"),
+    ("extranjero", "publico_extranjero"),
+    ("valor", "valor_estimado"),
 ]
 
 
@@ -177,6 +209,8 @@ def preparar(df_crudo: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
     df["plataforma"] = df["plataforma"].map(_plataforma_canonica)
     df["sector"] = df["sector"].map(_sector_canonico)
+    df["tipo_dolor"] = df["tipo_dolor"].map(_tipo_dolor_canonico)
+    df["tipo_destinatario"] = df["tipo_destinatario"].map(_tipo_destinatario_canonico)
 
     # Deduplicacion contra la base y dentro del propio archivo.
     existentes = db.claves_existentes()
@@ -238,6 +272,64 @@ def _sector_canonico(valor: str) -> str:
     return "Otro"
 
 
+def _tipo_dolor_canonico(valor: str) -> str:
+    """Mapea el tipo de dolor al enum. Lo que no se reconozca queda vacío.
+
+    Vacío es correcto aquí: significa "sin clasificar", y el detalle del lead lo
+    marca para que Gerardo lo elija. Meterlo a la fuerza en una categoría produciría
+    un gancho que no corresponde al negocio.
+
+    >>> _tipo_dolor_canonico("Canales sin unificar")
+    'canales_sin_unificar'
+    >>> _tipo_dolor_canonico("multisede"), _tipo_dolor_canonico("lo que sea")
+    ('multisede_sin_visibilidad', '')
+    """
+    clave = _norm(valor)
+    if not clave:
+        return ""
+    for tipo in db.TIPOS_DOLOR:
+        if _norm(tipo) == clave:
+            return tipo
+    alias = {
+        "canales": "canales_sin_unificar", "unificar": "canales_sin_unificar",
+        "seguimiento": "seguimiento_manual", "manual": "seguimiento_manual",
+        "datos": "sin_datos", "medir": "sin_datos",
+        "repetitivos": "procesos_repetitivos", "automatizar": "procesos_repetitivos",
+        "multisede": "multisede_sin_visibilidad", "sucursales": "multisede_sin_visibilidad",
+    }
+    for patron, tipo in alias.items():
+        if patron in clave:
+            return tipo
+    return ""
+
+
+def _tipo_destinatario_canonico(valor: str) -> str:
+    """Mapea a quién se le escribe. Lo desconocido cae en 'desconocido', que usa la
+    versión neutra del mensaje.
+
+    >>> _tipo_destinatario_canonico("Dueño"), _tipo_destinatario_canonico("")
+    ('dueno', 'desconocido')
+    >>> _tipo_destinatario_canonico("recepción")
+    'recepcion'
+    """
+    clave = _norm(valor)
+    if not clave:
+        return "desconocido"
+    for tipo in db.TIPOS_DESTINATARIO:
+        if _norm(tipo) == clave:
+            return tipo
+    alias = {
+        "dueno": "dueno", "socio": "dueno", "propietario": "dueno", "gerente": "dueno",
+        "doctor": "doctor", "doctora": "doctor", "dr": "doctor", "medico": "doctor",
+        "recepcion": "recepcion", "front": "recepcion", "asistente": "recepcion",
+        "marketing": "marketing", "mercadotecnia": "marketing", "publicidad": "marketing",
+    }
+    for patron, tipo in alias.items():
+        if patron in clave:
+            return tipo
+    return "desconocido"
+
+
 def _plataforma_canonica(valor: str) -> str:
     texto = str(valor or "").strip()
     if not texto:
@@ -281,6 +373,18 @@ def plantilla_csv() -> bytes:
                 "mensaje_plantilla": "Hola! Soy {mi_nombre} — ayudo a negocios como {negocio} a…",
                 "track_recomendado": "Unificar puertas de entrada",
                 "senales_investigacion": "4.2★ · 120 reseñas · 2 sucursales",
+                "valor_estimado": 4000,
+                # Los campos del generador: números y sí/no, nada que redactar.
+                "tipo_dolor": "canales_sin_unificar",
+                "tipo_destinatario": "dueno",
+                "tratamiento": "",
+                "num_sucursales": 2,
+                "num_resenas": 120,
+                "num_profesionales": "",
+                "sistema_detectado": "app de reservas propia",
+                "canales_detectados": "WhatsApp e Instagram",
+                "horario_extendido": "sí",
+                "publico_extranjero": "no",
             }
         ],
         columns=COLUMNAS_ESPERADAS,

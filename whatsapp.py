@@ -32,10 +32,10 @@ def limpiar_telefono(raw: str | None, lada_default: str = "52") -> str | None:
 
     Devuelve None si el valor no parece un telefono usable.
 
-    >>> limpiar_telefono("+52 33 1593 4381")
-    '523315934381'
-    >>> limpiar_telefono("33 1593 4381")
-    '523315934381'
+    >>> limpiar_telefono("+52 33 1234 5678")
+    '523312345678'
+    >>> limpiar_telefono("33 1234 5678")
+    '523312345678'
     >>> limpiar_telefono("Sin teléfono público — buscar en Instagram")
     """
     if raw is None:

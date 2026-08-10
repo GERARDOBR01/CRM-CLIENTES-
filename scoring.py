@@ -156,6 +156,13 @@ def plan_seguimiento(lead: dict, metricas: dict | None = None) -> dict:
       agotado     -> bool, ya se acabó la secuencia de esta etapa
       plantilla   -> nombre de la plantilla sugerida
       vencido_por -> días de retraso respecto al día objetivo
+      compromiso  -> bool, toca porque hay una fecha prometida, no por calendario
+      espera_hasta-> días que faltan para la fecha prometida (None si no hay)
+
+    Una **fecha comprometida gana siempre** sobre el calendario, en los dos sentidos:
+    si ya llegó, el lead sale hoy aunque el calendario dijera que faltan días; y si
+    todavía no llega, el lead NO se nagea aunque el calendario ya lo pidiera. Quedar
+    de escribir el jueves y escribir el martes queda peor que no escribir.
     """
     metricas = metricas or {}
     estatus = lead.get("estatus") or "Sin contactar"
@@ -171,9 +178,25 @@ def plan_seguimiento(lead: dict, metricas: dict | None = None) -> dict:
         "agotado": False,
         "plantilla": ESCALERA_PLANTILLAS[min(enviados, len(ESCALERA_PLANTILLAS) - 1)],
         "vencido_por": 0,
+        "compromiso": False,
+        "espera_hasta": None,
     }
 
-    if estatus in db.ESTATUS_CERRADOS or not calendario or dias is None:
+    if estatus in db.ESTATUS_CERRADOS:
+        return plan
+
+    compromiso = lead.get("dias_desde_compromiso")
+    if compromiso is not None:
+        if compromiso >= 0:
+            plan["toca"] = True
+            plan["compromiso"] = True
+            plan["vencido_por"] = int(compromiso)
+            return plan
+        # Prometido para después: se respeta el silencio hasta esa fecha.
+        plan["espera_hasta"] = int(-compromiso)
+        return plan
+
+    if not calendario or dias is None:
         return plan
 
     if enviados >= len(calendario):
@@ -202,7 +225,17 @@ def razon_urgencia(lead: dict, plan: dict, metricas: dict | None = None) -> str:
     aperturas = int(lead.get("aperturas") or 0)
     dias_apertura = lead.get("dias_desde_apertura")
 
-    # Lo más elocuente primero: abrió el diagnóstico y no se le ha dado seguimiento.
+    # Un compromiso con fecha manda sobre todo lo demás: lo prometiste tú.
+    if plan.get("compromiso"):
+        atraso = plan.get("vencido_por", 0)
+        if atraso == 0:
+            return "quedaste de escribirle hoy"
+        return f"quedaste de escribirle hace {_dias(atraso)}"
+
+    if plan.get("espera_hasta"):
+        return f"quedaste de escribirle en {_dias(plan['espera_hasta'])}"
+
+    # Lo más elocuente después: abrió el diagnóstico y no se le ha dado seguimiento.
     if aperturas and dias_apertura is not None:
         cuando = "hoy" if dias_apertura == 0 else "ayer" if dias_apertura == 1 else f"hace {_dias(dias_apertura)}"
         if dias is not None and dias_apertura <= dias:

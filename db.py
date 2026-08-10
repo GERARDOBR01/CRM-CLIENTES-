@@ -44,18 +44,42 @@ ESTATUS_CERRADOS = {"Cerrado - Ganado", "Cerrado - Perdido"}
 # Estatus "calientes": hay interes demostrado y dejarlos enfriar es el error caro.
 ESTATUS_CALIENTES = ["Diagnóstico visto", "Interesado", "Propuesta enviada", "Negociación"]
 
+# Etapas a las que solo se llega si el prospecto contestó.
+#
+# NO se puede usar `ORDEN_ESTATUS[e] >= ORDEN_ESTATUS["Interesado"]` para esto: los
+# dos cerrados van al final de la lista, así que «Cerrado - Perdido» quedaría por
+# encima de «Interesado» y contaría como respuesta. Un lead se puede cerrar como
+# perdido desde cualquier etapa, incluso sin que haya contestado nunca.
+ESTATUS_CON_RESPUESTA = {"Interesado", "Propuesta enviada", "Negociación", "Cerrado - Ganado"}
+
+# Etapas que implican que ya se le mandó el diagnóstico.
+ESTATUS_CON_DIAGNOSTICO = {"Diagnóstico enviado", "Diagnóstico visto"}
+
 # Probabilidad de cierre por etapa, para el pipeline ponderado.
+#
+# SON ESTIMACIONES, NO MEDICIONES. Todavía no hay cierres propios con los cuales
+# calcular estas tasas; salieron del brief como punto de partida. En cuanto haya
+# suficientes `Cerrado - Ganado` y `Cerrado - Perdido`, se recalculan con datos
+# reales (📊 Métricas ya muestra la tasa de cierre por sector). La UI lo advierte
+# donde sea que muestre el pipeline ponderado.
 PROBABILIDAD_ESTATUS = {
     "Sin contactar": 0.02,
     "Contactado": 0.05,
-    "Diagnóstico enviado": 0.15,
-    "Diagnóstico visto": 0.30,
-    "Interesado": 0.45,
-    "Propuesta enviada": 0.60,
-    "Negociación": 0.80,
+    "Diagnóstico enviado": 0.10,
+    "Diagnóstico visto": 0.25,
+    "Interesado": 0.40,
+    "Propuesta enviada": 0.55,
+    "Negociación": 0.75,
     "Cerrado - Ganado": 1.0,
     "Cerrado - Perdido": 0.0,
 }
+
+# Aviso único para no repetir la misma frase en cada vista que pinte el ponderado.
+AVISO_PROBABILIDAD = (
+    "Las probabilidades por etapa son estimaciones iniciales, no tasas medidas: "
+    "todavía no hay cierres propios suficientes para calcularlas. Sirven para "
+    "comparar leads entre sí, no como pronóstico de ingreso."
+)
 
 # Estatus viejos (v1) -> nuevos (v2). Se aplica una sola vez en la migracion.
 MAPEO_ESTATUS_V1 = {
@@ -66,6 +90,41 @@ MAPEO_ESTATUS_V1 = {
 }
 
 SECTORES = ["Fitness/Gym", "Fisioterapia", "Nutrición", "Restaurantes", "Dental", "Otro"]
+
+# --------------------------------------------------------------------------- #
+# Clasificación para el generador de mensajes (sección 6.5 del brief)
+# --------------------------------------------------------------------------- #
+# El dolor se CLASIFICA en un enum, no se detecta buscando palabras dentro de
+# `evidencia_dolor`. Esa evidencia es prosa escrita para que Gerardo la lea; buscar
+# substrings ahí falla en silencio en cuanto alguien redacta distinto.
+TIPOS_DOLOR = [
+    "canales_sin_unificar",
+    "seguimiento_manual",
+    "sin_datos",
+    "procesos_repetitivos",
+    "multisede_sin_visibilidad",
+]
+
+# Etiquetas legibles (la base guarda el enum, la UI muestra esto).
+ETIQUETAS_TIPO_DOLOR = {
+    "": "— sin clasificar —",
+    "canales_sin_unificar": "Canales sin unificar",
+    "seguimiento_manual": "Seguimiento manual",
+    "sin_datos": "Sin datos del negocio",
+    "procesos_repetitivos": "Procesos repetitivos",
+    "multisede_sin_visibilidad": "Multisede sin visibilidad",
+}
+
+# A quién se le escribe. Cambia el mensaje completo, no solo el saludo.
+TIPOS_DESTINATARIO = ["dueno", "doctor", "recepcion", "marketing", "desconocido"]
+
+ETIQUETAS_TIPO_DESTINATARIO = {
+    "dueno": "Dueño / socio",
+    "doctor": "Doctor(a) / especialista",
+    "recepcion": "Recepción",
+    "marketing": "Marketing",
+    "desconocido": "No sé quién contesta",
+}
 
 # Sectores prioritarios hoy (se marcan en la vista de metricas).
 SECTORES_PRIORITARIOS = ["Fitness/Gym", "Fisioterapia", "Nutrición"]
@@ -85,6 +144,36 @@ PRECIOS = {
     "mensualidad": {"min": 1500, "max": 2500, "default": 2000},
 }
 
+# Campos del generador de mensajes (sección 6.5). Dos grupos:
+#
+#   1. Clasificación — de qué le duele y a quién se le escribe.
+#   2. Hechos estructurados — números y sí/no que se capturan tecleando, no
+#      redactando. Todos opcionales: el generador usa los que existan y cae a una
+#      plantilla sin requisitos cuando no hay ninguno, así ningún lead se queda
+#      sin mensaje.
+CAMPOS_MENSAJE = [
+    "tipo_dolor",
+    "tipo_destinatario",
+    "tratamiento",
+    "num_sucursales",
+    "num_resenas",
+    "num_profesionales",
+    "sistema_detectado",
+    "canales_detectados",
+    "horario_extendido",
+    "publico_extranjero",
+]
+
+# Hechos numéricos: nacen en NULL, no en 0. "Todavía no lo investigué" no es lo
+# mismo que "tiene cero sucursales", y el generador elige plantilla según eso.
+CAMPOS_ENTEROS = {"num_sucursales", "num_resenas", "num_profesionales"}
+
+# SQLite no tiene BOOL: 0/1 en un INTEGER. Aquí sí conviene default 0, porque
+# "no hay señal de público extranjero" y "no lo sé" llevan a la misma decisión.
+CAMPOS_BOOLEANOS = {"horario_extendido", "publico_extranjero"}
+
+CAMPOS_FECHA = {"fecha_contacto", "fecha_proximo_seguimiento"}
+
 # Campos editables del lead (el orden se usa en la tabla principal).
 CAMPOS = [
     "negocio",
@@ -101,8 +190,10 @@ CAMPOS = [
     "estatus",
     "valor_estimado",
     "fecha_contacto",
+    "fecha_proximo_seguimiento",
     "proxima_accion",
     "notas",
+    *CAMPOS_MENSAJE,
 ]
 
 # Campos que maneja la app sola (tracking del diagnostico). No se editan a mano
@@ -116,7 +207,15 @@ CAMPOS_SISTEMA = [
 ]
 
 # Tipo SQL de las columnas que no son TEXT.
-TIPOS_COLUMNA = {"valor_estimado": "REAL DEFAULT 0", "aperturas": "INTEGER DEFAULT 0"}
+TIPOS_COLUMNA = {
+    "valor_estimado": "REAL DEFAULT 0",
+    "aperturas": "INTEGER DEFAULT 0",
+    "num_sucursales": "INTEGER",
+    "num_resenas": "INTEGER",
+    "num_profesionales": "INTEGER",
+    "horario_extendido": "INTEGER DEFAULT 0",
+    "publico_extranjero": "INTEGER DEFAULT 0",
+}
 
 # Campos que llena la investigacion previa (los que trae un archivo de carga).
 CAMPOS_IMPORTABLES = [
@@ -131,6 +230,8 @@ CAMPOS_IMPORTABLES = [
     "mensaje_plantilla",
     "track_recomendado",
     "senales_investigacion",
+    "valor_estimado",
+    *CAMPOS_MENSAJE,
 ]
 
 AJUSTES_DEFAULT = {
@@ -159,8 +260,20 @@ CREATE TABLE IF NOT EXISTS leads (
     sector            TEXT DEFAULT 'Otro',
     valor_estimado    REAL DEFAULT 0,
     fecha_contacto    TEXT,
+    fecha_proximo_seguimiento TEXT,
     proxima_accion    TEXT DEFAULT '',
     notas             TEXT DEFAULT '',
+    -- Generador de mensajes (6.5): clasificación + hechos estructurados.
+    tipo_dolor         TEXT DEFAULT '',
+    tipo_destinatario  TEXT DEFAULT 'desconocido',
+    tratamiento        TEXT DEFAULT '',
+    num_sucursales     INTEGER,
+    num_resenas        INTEGER,
+    num_profesionales  INTEGER,
+    sistema_detectado  TEXT DEFAULT '',
+    canales_detectados TEXT DEFAULT '',
+    horario_extendido  INTEGER DEFAULT 0,
+    publico_extranjero INTEGER DEFAULT 0,
     token_diagnostico TEXT DEFAULT '',
     diagnostico_url   TEXT DEFAULT '',
     diagnostico_enviado_en TEXT,
@@ -276,9 +389,51 @@ def _migrar_columnas(con: sqlite3.Connection) -> list[str]:
     _rellenar_dolores_semilla(con)
     # `sector` nace vacío en las filas viejas; el default solo aplica a inserts nuevos.
     con.execute("UPDATE leads SET sector = 'Otro' WHERE sector IS NULL OR sector = ''")
-    con.execute("UPDATE leads SET valor_estimado = 0 WHERE valor_estimado IS NULL")
     con.execute("UPDATE leads SET aperturas = 0 WHERE aperturas IS NULL")
+
+    # SQLite guarda lo que le den, sin importar el tipo de la columna: los CSV de
+    # investigación trajeron `valor_estimado` como cadena vacía y ahí se quedó, en
+    # una columna REAL. Se limpia una sola vez.
+    con.execute(
+        "UPDATE leads SET valor_estimado = 0 "
+        "WHERE valor_estimado IS NULL OR TRIM(CAST(valor_estimado AS TEXT)) = ''"
+    )
+    for campo in CAMPOS_ENTEROS:
+        con.execute(
+            f"UPDATE leads SET {campo} = NULL WHERE TRIM(CAST({campo} AS TEXT)) = ''"
+        )
+    for campo in CAMPOS_BOOLEANOS:
+        con.execute(f"UPDATE leads SET {campo} = 0 WHERE {campo} IS NULL OR {campo} = ''")
+
+    # `ADD COLUMN ... TEXT DEFAULT ''` deja las filas viejas en cadena vacía, que no
+    # es un valor válido del enum. 'desconocido' es la variante neutra del generador.
+    con.execute(
+        "UPDATE leads SET tipo_destinatario = 'desconocido' "
+        "WHERE tipo_destinatario IS NULL OR tipo_destinatario = ''"
+    )
+    _rellenar_valor_sugerido(con)
     return agregadas
+
+
+def _rellenar_valor_sugerido(con: sqlite3.Connection) -> int:
+    """Pone el valor de lista a los leads abiertos que no tengan ninguno.
+
+    No inventa nada del cliente: aplica el precio propio de Certeza según sector y
+    etapa. Sin esto, 24 leads importados dejan el pipeline en $0 y el número deja de
+    servir para decidir. Solo toca los que están en cero, así que jamás pisa una
+    cifra que Gerardo haya escrito a mano, y deja fuera los cerrados.
+    """
+    filas = con.execute(
+        "SELECT id, sector, estatus FROM leads "
+        "WHERE (valor_estimado IS NULL OR valor_estimado = 0) AND estatus NOT IN (?, ?)",
+        tuple(ESTATUS_CERRADOS),
+    ).fetchall()
+    for f in filas:
+        con.execute(
+            "UPDATE leads SET valor_estimado = ? WHERE id = ?",
+            (valor_sugerido(f["sector"] or "", f["estatus"]), f["id"]),
+        )
+    return len(filas)
 
 
 def _rellenar_dolores_semilla(con: sqlite3.Connection) -> int:
@@ -409,6 +564,10 @@ def listar_leads(
 
     df["dias_desde_contacto"] = df["fecha_contacto"].map(_dias_desde).astype("Int64")
     df["dias_desde_apertura"] = df["ultima_apertura"].map(_dias_desde).astype("Int64")
+    # Negativo = la fecha comprometida todavía no llega; 0 o más = ya venció.
+    df["dias_desde_compromiso"] = (
+        df["fecha_proximo_seguimiento"].map(_dias_desde).astype("Int64")
+    )
 
     if estatus:
         df = df[df["estatus"].isin(estatus)]
@@ -439,15 +598,98 @@ def obtener_lead(lead_id: int) -> dict | None:
         return None
     lead = dict(fila)
     lead["dias_desde_contacto"] = _dias_desde(lead.get("fecha_contacto"))
+    lead["dias_desde_apertura"] = _dias_desde(lead.get("ultima_apertura"))
+    lead["dias_desde_compromiso"] = _dias_desde(lead.get("fecha_proximo_seguimiento"))
     return lead
 
 
-def crear_lead(**campos) -> int:
-    datos = {c: "" for c in CAMPOS}
+def entero_o_none(valor) -> int | None:
+    """Convierte a int lo que se pueda; `None` para vacío, basura o NaN.
+
+    Vale la pena distinguir el `None`: un hecho sin investigar no es un cero, y el
+    generador de mensajes descarta la plantilla que requiere ese dato en vez de
+    escribir "tienen 0 sucursales".
+
+    >>> entero_o_none("906"), entero_o_none(3.0), entero_o_none("")
+    (906, 3, None)
+    >>> entero_o_none("4.9 estrellas"), entero_o_none(None)
+    (None, None)
+    """
+    if valor is None or valor == "":
+        return None
+    try:
+        if pd.isna(valor):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(float(str(valor).strip().replace(",", "")))
+    except (TypeError, ValueError):
+        return None
+
+
+def booleano(valor) -> int:
+    """Normaliza a 0/1. Acepta lo que escriba un humano en un CSV.
+
+    >>> [booleano(v) for v in (True, "sí", "TRUE", 1, "x")]
+    [1, 1, 1, 1, 1]
+    >>> [booleano(v) for v in (False, "no", "", None, 0)]
+    [0, 0, 0, 0, 0]
+    """
+    if valor is None or valor is False:
+        return 0
+    if valor is True:
+        return 1
+    texto = str(valor).strip().lower()
+    if not texto:
+        return 0
+    if texto in ("0", "no", "false", "n", "nan", "none", "-"):
+        return 0
+    return 1
+
+
+def _normalizar_campos(campos: dict) -> dict:
+    """Deja cada campo en el tipo que le toca antes de tocar SQLite.
+
+    SQLite acepta cualquier cosa en cualquier columna, así que sin esto un `""`
+    que venga de un formulario se guarda tal cual en una columna INTEGER y después
+    revienta al comparar. Se normaliza en la frontera, una sola vez.
+    """
+    limpios = dict(campos)
+    for campo in CAMPOS_FECHA & limpios.keys():
+        limpios[campo] = normalizar_fecha(limpios[campo])
+    for campo in CAMPOS_ENTEROS & limpios.keys():
+        limpios[campo] = entero_o_none(limpios[campo])
+    for campo in CAMPOS_BOOLEANOS & limpios.keys():
+        limpios[campo] = booleano(limpios[campo])
+    if "valor_estimado" in limpios:
+        try:
+            limpios["valor_estimado"] = float(limpios["valor_estimado"] or 0)
+        except (TypeError, ValueError):
+            limpios["valor_estimado"] = 0.0
+    if "tipo_dolor" in limpios and limpios["tipo_dolor"] not in TIPOS_DOLOR:
+        limpios["tipo_dolor"] = ""
+    if "tipo_destinatario" in limpios and limpios["tipo_destinatario"] not in TIPOS_DESTINATARIO:
+        limpios["tipo_destinatario"] = "desconocido"
+    return limpios
+
+
+def _lead_vacio() -> dict:
+    """Fila nueva con cada campo en su valor neutro y con el tipo correcto."""
+    datos: dict = {c: "" for c in CAMPOS}
+    datos.update({c: None for c in CAMPOS_ENTEROS})
+    datos.update({c: 0 for c in CAMPOS_BOOLEANOS})
+    datos.update({c: None for c in CAMPOS_FECHA})
     datos["estatus"] = "Sin contactar"
     datos["plataforma"] = "WhatsApp"
-    datos["fecha_contacto"] = None
-    datos.update({k: v for k, v in campos.items() if k in CAMPOS})
+    datos["tipo_destinatario"] = "desconocido"
+    datos["valor_estimado"] = 0.0
+    return datos
+
+
+def crear_lead(**campos) -> int:
+    datos = _lead_vacio()
+    datos.update(_normalizar_campos({k: v for k, v in campos.items() if k in CAMPOS}))
 
     if not str(datos["negocio"] or "").strip():
         raise ValueError("El lead necesita al menos un nombre de negocio.")
@@ -465,12 +707,9 @@ def actualizar_lead(lead_id: int, **campos) -> None:
     # Incluye los campos de sistema (token, aperturas…): si solo se aceptaran los
     # editables, el tracking del diagnóstico se perdería en silencio.
     permitidos = {*CAMPOS, *CAMPOS_SISTEMA}
-    cambios = {k: v for k, v in campos.items() if k in permitidos}
+    cambios = _normalizar_campos({k: v for k, v in campos.items() if k in permitidos})
     if not cambios:
         return
-    # Normaliza fechas (acepta date/datetime/str/None).
-    if "fecha_contacto" in cambios:
-        cambios["fecha_contacto"] = normalizar_fecha(cambios["fecha_contacto"])
 
     sets = ", ".join(f"{k} = ?" for k in cambios)
     with conectar() as con:
@@ -484,10 +723,10 @@ def clave_dedup(negocio, telefono) -> tuple[str, str]:
     """Clave de duplicado: negocio + telefono, ambos normalizados.
 
     El telefono se reduce a puros digitos (sin espacios, guiones, parentesis ni +)
-    para que "+52 33 1593 4381" y "3315934381" cuenten como el mismo numero.
+    para que "+52 33 1234 5678" y "3312345678" cuenten como el mismo numero.
 
-    >>> clave_dedup("Boutique Ejemplo ", "+52 33-1578-0598")
-    ('boutique ejemplo', '523315780598')
+    >>> clave_dedup("Boutique Ejemplo ", "+52 33-1234-5678")
+    ('boutique ejemplo', '523312345678')
     >>> clave_dedup("TotalMarket", None)
     ('totalmarket', '')
     """
@@ -518,11 +757,8 @@ def crear_leads_lote(registros: list[dict]) -> int:
     marcas = ", ".join("?" * len(cols))
     filas = []
     for reg in registros:
-        datos = {c: "" for c in CAMPOS}
-        datos["estatus"] = "Sin contactar"
-        datos["plataforma"] = "WhatsApp"
-        datos["fecha_contacto"] = None
-        datos.update({k: v for k, v in reg.items() if k in CAMPOS})
+        datos = _lead_vacio()
+        datos.update(_normalizar_campos({k: v for k, v in reg.items() if k in CAMPOS}))
         if not str(datos["negocio"] or "").strip():
             continue
         filas.append([datos[c] for c in CAMPOS] + [ahora, ahora])
@@ -622,6 +858,7 @@ def marcar_contactado(
     canal: str = "WhatsApp",
     tipo: str = "Mensaje inicial",
     proxima_accion: str | None = None,
+    detalle: str = "",
 ) -> dict:
     """Registra un contacto: avanza el estatus a 'Contactado', pone la fecha de hoy
     y guarda el mensaje en el historial.
@@ -637,9 +874,77 @@ def marcar_contactado(
     campos["estatus"] = avanzar_estatus(lead["estatus"], "Contactado")
     if proxima_accion is not None:
         campos["proxima_accion"] = proxima_accion
+    # La fecha comprometida ya se cumplió al escribirle: si se quedara puesta, el
+    # lead seguiría saliendo como vencido en HOY todos los días.
+    if lead.get("fecha_proximo_seguimiento"):
+        campos["fecha_proximo_seguimiento"] = None
 
     actualizar_lead(lead_id, **campos)
-    registrar_contacto(lead_id, tipo=tipo, canal=canal, mensaje=mensaje)
+    # `detalle` lleva la firma del generador (qué dolor y qué variantes se usaron).
+    # Es lo que después permite saber qué tipo de mensaje funciona: sin esto, la
+    # tasa de respuesta por tipo de dolor no se puede calcular.
+    registrar_contacto(lead_id, tipo=tipo, canal=canal, mensaje=mensaje, detalle=detalle)
+    return obtener_lead(lead_id)
+
+
+TIPOS_ENVIO = ("Mensaje inicial", "Seguimiento")
+
+
+def puede_deshacer(lead_id: int) -> bool:
+    """¿Hay un envío registrado que se pueda revertir?"""
+    marcas = ", ".join("?" * len(TIPOS_ENVIO))
+    with conectar() as con:
+        fila = con.execute(
+            f"SELECT 1 FROM contactos WHERE lead_id = ? AND tipo IN ({marcas}) LIMIT 1",
+            (int(lead_id), *TIPOS_ENVIO),
+        ).fetchone()
+    return fila is not None
+
+
+def deshacer_ultimo_contacto(lead_id: int) -> dict | None:
+    """Revierte el último envío registrado.
+
+    El botón de WhatsApp avanza el estatus y pone la fecha de hoy en cuanto se
+    toca. En el celular es fácil darle sin querer, y hasta ahora la única salida era
+    editar la base a mano. Esto lo deshace: borra el envío del historial, regresa la
+    fecha de contacto a la del envío anterior (o a vacío si era el primero) y, si con
+    eso el lead se queda sin ningún contacto, lo devuelve a «Sin contactar».
+
+    No borra el rastro en silencio: deja una nota diciendo que se deshizo. Devuelve
+    el lead ya actualizado, o `None` si no había nada que revertir.
+    """
+    marcas = ", ".join("?" * len(TIPOS_ENVIO))
+    with conectar() as con:
+        ultimo = con.execute(
+            f"SELECT id, fecha, tipo FROM contactos WHERE lead_id = ? AND tipo IN ({marcas}) "
+            "ORDER BY fecha DESC, id DESC LIMIT 1",
+            (int(lead_id), *TIPOS_ENVIO),
+        ).fetchone()
+        if ultimo is None:
+            return None
+
+        con.execute("DELETE FROM contactos WHERE id = ?", (ultimo["id"],))
+        previo = con.execute(
+            f"SELECT fecha FROM contactos WHERE lead_id = ? AND tipo IN ({marcas}) "
+            "ORDER BY fecha DESC, id DESC LIMIT 1",
+            (int(lead_id), *TIPOS_ENVIO),
+        ).fetchone()
+
+    lead = obtener_lead(lead_id)
+    cambios: dict = {"fecha_contacto": previo["fecha"][:10] if previo else None}
+    # Solo se regresa a «Sin contactar» si de verdad ya no queda ningún envío. Un
+    # lead que llegó a Negociación no se degrada por deshacer un seguimiento: esa
+    # información se ganó aparte.
+    if previo is None and lead and lead["estatus"] == "Contactado":
+        cambios["estatus"] = "Sin contactar"
+
+    actualizar_lead(lead_id, **cambios)
+    registrar_contacto(
+        lead_id,
+        tipo="Nota",
+        detalle=f"Se deshizo el envío registrado el {str(ultimo['fecha'])[:16].replace('T', ' ')}"
+                f" ({ultimo['tipo'].lower()}).",
+    )
     return obtener_lead(lead_id)
 
 

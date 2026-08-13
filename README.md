@@ -1,16 +1,36 @@
-# CRM Certeza — leads, diagnósticos y outreach por WhatsApp
+<img src="assets/banner.svg" alt="CRM Certeza — a quién le escribo hoy, qué le digo y por qué" width="100%">
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.13-1F2328?style=for-the-badge&logo=python&logoColor=30A46C" alt="Python">
+  <img src="https://img.shields.io/badge/Streamlit-1.58-1F2328?style=for-the-badge&logo=streamlit&logoColor=E5484D" alt="Streamlit">
+  <img src="https://img.shields.io/badge/SQLite-local-1F2328?style=for-the-badge&logo=sqlite&logoColor=7C8896" alt="SQLite">
+  <img src="https://img.shields.io/badge/envío-siempre_manual-F5A524?style=for-the-badge" alt="Envío manual">
+</p>
+
+**La pregunta que contesta es una sola: *¿a quién le escribo hoy, qué le digo y por qué?***
 
 CRM local de un solo usuario para prospección de servicios de automatización operativa.
 Encuentra los mejores clientes, dice qué venderles, de qué les duele, y a quién hay que
-hablarle **hoy**.
+hablarle **hoy**. Python + Streamlit + SQLite: sin servicios de pago, sin dependencias
+externas obligatorias, sin nube.
 
-Python + Streamlit + SQLite. Sin servicios de pago, sin dependencias externas obligatorias.
+<p align="center">
+  <img src="assets/vista-hoy.png" alt="Vista HOY: la siguiente mejor acción, el score del lead y el mensaje ya redactado listo para revisar" width="100%">
+</p>
+
+> La app **prepara** el mensaje; nunca lo envía sola. El clic final en WhatsApp siempre lo
+> da una persona — no por prudencia sino por diseño: automatizar outreach frío con
+> librerías no oficiales termina en baneo permanente del número, que es justo el canal de
+> venta que se está tratando de proteger. Solo links `wa.me` click-to-chat.
 
 ```bash
-python -m streamlit run app.py
+python -m streamlit run app.py     # o doble clic en run.bat → http://localhost:8501
 ```
 
-(o doble clic en `run.bat`). Abre `http://localhost:8501`.
+Con la base vacía y sin datos propios, la app se siembra sola con `leads_ejemplo.csv`
+(negocios ficticios) para que se vea funcionando. **Ningún dato real de prospectos vive en
+este repositorio ni en su historial**: `leads.db`, los `.csv` exportados, los diagnósticos
+generados y los secretos están bloqueados en `.gitignore`.
 
 ---
 
